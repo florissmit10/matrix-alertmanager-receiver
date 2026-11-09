@@ -103,6 +103,10 @@ matrix:
   # define short names for Matrix room ID
   room-mapping:
     simple-name: "!qohfwef7qwerf:example.com"
+  # how resolved alerts are delivered. Defaults to new-event.
+  #   new-event: send a separate resolved message (the historic behaviour)
+  #   edit:      edit the matching firing message in place via an m.replace relation
+  resolved-notification-mode: new-event
 
 # configuration of the templating features
 templating:
@@ -158,6 +162,31 @@ templating:
   resolved-template: '
     <strong><font color="green">{{ .Alert.Status | ToUpper }}</font></strong>{{ .Alert.Labels.name }}'
 ```
+
+### Resolved notifications in place
+
+By default every alert — firing and resolved — is sent as a new Matrix event. Set
+`matrix.resolved-notification-mode: edit` to instead edit the firing message in
+place when the alert resolves.
+
+Edit mode is stateless: every firing message embeds three custom content keys
+(`uk.homelab.alert.fingerprint`, `uk.homelab.alert.startsAt` and
+`uk.homelab.alert.status`). When an alert resolves, the receiver scans the room
+history backwards for firing messages with the same fingerprint and `startsAt`,
+then sends an `m.replace` edit for each one that is still open. The scan is
+bounded: it stops once it passes the alert's `startsAt` and never walks more than
+a fixed number of pages, so no event store or volume is required.
+
+The fingerprint plus `startsAt` identifies a single firing cycle. A repeat
+notification (same fingerprint and `startsAt`) edits the existing message instead
+of posting a new one; an alert that re-fires after being resolved has a new
+`startsAt` and gets a fresh message. If no firing message can be found, the
+resolved alert falls back to a normal new message, and a repeated resolve of an
+already-resolved cycle sends nothing.
+
+This assumes a single receiver process; with several replicas a resolve could be
+handled by an instance that cannot see the firing message in its own history
+scan, in which case it falls back to a new message.
 
 ### Templating
 
@@ -321,6 +350,15 @@ matrix_alertmanager_receiver_send_failure_total
 
 # The total number of successful send operations
 matrix_alertmanager_receiver_send_success_total
+
+# The total number of successful in-place edit operations
+matrix_alertmanager_receiver_edit_success_total
+
+# The total number of failed in-place edit operations
+matrix_alertmanager_receiver_edit_failure_total
+
+# The total number of failed room history lookups
+matrix_alertmanager_receiver_history_failure_total
 ```
 
 ## Alternatives
